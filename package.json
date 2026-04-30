@@ -1,9 +1,9 @@
 {
-  "name": "webtool",
+  "name": "codex-web-dom-bridge",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A tiny DOM-native web control bridge for letting Codex observe and act on browser pages without pixel targeting.",
+  "description": "A local MCP browser bridge that lets Codex observe, act, wait, extract, search, and run workflows directly against the live DOM.",
   "bin": {
     "codex-web": "./bin/codex-web.mjs",
     "codex-web-mcp": "./bin/codex-web-mcp.mjs"

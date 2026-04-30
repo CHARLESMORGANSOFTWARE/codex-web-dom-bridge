@@ -1,6 +1,27 @@
-# Webtool
+# Codex Web DOM Bridge
 
-A brilliantly small bridge for controlling the web through the page's HTML layer instead of screen coordinates.
+Browser control at DOM speed, built for Codex.
+
+Codex Web DOM Bridge is a lightweight browser-control layer that makes Codex dramatically faster and more reliable when working on the web.
+
+Instead of forcing Codex to inspect screenshots, guess coordinates, move the mouse, click pixels, and wait through slow visual feedback loops, this bridge lets Codex interact directly with the page's live DOM. It exposes a compact set of browser tools for observing page structure, clicking buttons, typing into fields, waiting for page changes, extracting content, searching pages, and running multi-step workflows in a single browser hop.
+
+The result is a faster, cleaner, and more accurate way for Codex to control websites.
+
+Codex can use the bridge through MCP tools such as `web_observe`, `web_act`, `web_wait`, `web_extract`, `web_search`, and `web_run`. The bridge maps live page elements into stable temporary handles, then resolves later actions against the actual DOM node. That means Codex can work more like a browser-native automation agent instead of a remote human trying to click around visually.
+
+This is especially useful for:
+
+- Agentic browser workflows
+- Web research automation
+- Form filling
+- Search and extraction
+- Browser-based testing
+- Codex-controlled web apps
+- Faster local AI tool execution
+- Reducing failures from bad clicks, missed elements, and visual ambiguity
+
+At its core, this project keeps Codex out of the pixel business whenever the web page already provides better structure. The fast path is `run`: compose the obvious DOM steps and let the browser content script perform them locally in one efficient workflow.
 
 ```text
 Codex CLI/tool calls
