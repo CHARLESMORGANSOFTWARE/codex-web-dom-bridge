@@ -11,6 +11,7 @@
     clientId: sessionStorage.getItem("codexDomBridgeClientId") || crypto.randomUUID(),
     nextElementId: 1,
     elementIds: new WeakMap(),
+    elementsById: new Map(),
     pendingFetches: 0,
     lastMutationAt: Date.now(),
     stopped: false
@@ -26,6 +27,50 @@
     attributes: true,
     characterData: true
   });
+
+  function trackAsyncWork(promise) {
+    state.pendingFetches += 1;
+    return Promise.resolve(promise).finally(() => {
+      state.pendingFetches = Math.max(0, state.pendingFetches - 1);
+    });
+  }
+
+  function installNetworkTracking() {
+    try {
+      const originalFetch = window.fetch;
+      if (typeof originalFetch === "function" && !originalFetch.__codexDomBridgeWrapped) {
+        const wrappedFetch = function wrappedFetch(...args) {
+          return trackAsyncWork(originalFetch.apply(this, args));
+        };
+        wrappedFetch.__codexDomBridgeWrapped = true;
+        window.fetch = wrappedFetch;
+      }
+    } catch {
+      // Some extension contexts do not allow replacing fetch. DOM quiet still works.
+    }
+
+    try {
+      const originalSend = XMLHttpRequest.prototype.send;
+      if (originalSend && !originalSend.__codexDomBridgeWrapped) {
+        XMLHttpRequest.prototype.send = function wrappedSend(...args) {
+          state.pendingFetches += 1;
+          this.addEventListener(
+            "loadend",
+            () => {
+              state.pendingFetches = Math.max(0, state.pendingFetches - 1);
+            },
+            { once: true }
+          );
+          return originalSend.apply(this, args);
+        };
+        XMLHttpRequest.prototype.send.__codexDomBridgeWrapped = true;
+      }
+    } catch {
+      // XHR can be locked down in some page worlds.
+    }
+  }
+
+  installNetworkTracking();
 
   function compactText(value, max = 180) {
     return String(value || "")
@@ -52,10 +97,12 @@
     const existing = element.getAttribute("data-codex-bridge-id");
     if (existing) {
       state.elementIds.set(element, existing);
+      state.elementsById.set(existing, element);
       return existing;
     }
     const id = `e${state.nextElementId++}`;
     state.elementIds.set(element, id);
+    state.elementsById.set(id, element);
     try {
       element.setAttribute("data-codex-bridge-id", id);
     } catch {
@@ -299,6 +346,8 @@
 
   function resolveElement(payload = {}) {
     if (payload.id) {
+      const mapped = state.elementsById.get(payload.id);
+      if (mapped?.isConnected) return mapped;
       const byData = document.querySelector(`[data-codex-bridge-id="${cssEscape(payload.id)}"]`);
       if (byData) return byData;
     }
@@ -318,6 +367,13 @@
     element.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  function setNativeValue(element, value) {
+    const prototype = Object.getPrototypeOf(element);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+    if (descriptor?.set) descriptor.set.call(element, value);
+    else element.value = value;
+  }
+
   function setElementValue(element, value, append = false) {
     const stringValue = String(value ?? "");
 
@@ -332,11 +388,11 @@
       if (append) {
         const start = element.selectionStart ?? element.value.length;
         const end = element.selectionEnd ?? element.value.length;
-        element.value = `${element.value.slice(0, start)}${stringValue}${element.value.slice(end)}`;
+        setNativeValue(element, `${element.value.slice(0, start)}${stringValue}${element.value.slice(end)}`);
         const cursor = start + stringValue.length;
         element.setSelectionRange?.(cursor, cursor);
       } else {
-        element.value = stringValue;
+        setNativeValue(element, stringValue);
       }
       dispatchInputEvents(element);
       return;
@@ -420,6 +476,7 @@
     const waitForKind = payload.for || payload.kind || "ready";
     const timeoutMs = Number(payload.timeoutMs || 10_000);
     const quietMs = Number(payload.quietMs || 500);
+    const since = Number(payload.since || 0);
     const startedAt = Date.now();
 
     while (Date.now() - startedAt < timeoutMs) {
@@ -437,7 +494,9 @@
 
       if (["networkIdle", "quiet", "domIdle"].includes(waitForKind)) {
         const quietEnough = Date.now() - state.lastMutationAt >= quietMs;
-        if (document.readyState === "complete" && quietEnough) {
+        const changedSinceMarker = !since || state.lastMutationAt >= since;
+        const networkQuiet = state.pendingFetches === 0;
+        if (document.readyState === "complete" && changedSinceMarker && quietEnough && networkQuiet) {
           return { matched: true, for: waitForKind, quietMs, elapsedMs: Date.now() - startedAt };
         }
       }
@@ -446,6 +505,36 @@
     }
 
     return { matched: false, for: waitForKind, timeoutMs };
+  }
+
+  function textForRoot(selector, maxText = 6000) {
+    const root = selector ? document.querySelector(selector) : document.body;
+    if (!root) return "";
+    return compactText(root.innerText || root.textContent || "", maxText);
+  }
+
+  async function waitForResultChange(selector, beforeText, payload = {}) {
+    const timeoutMs = Number(payload.timeoutMs || 5_000);
+    const quietMs = Number(payload.quietMs || 250);
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const afterText = textForRoot(selector, payload.maxText || 6000);
+      const changed = afterText !== beforeText;
+      const quietEnough = Date.now() - state.lastMutationAt >= quietMs;
+      const networkQuiet = state.pendingFetches === 0;
+      if (changed && quietEnough && networkQuiet) {
+        return {
+          matched: true,
+          for: "resultChange",
+          quietMs,
+          elapsedMs: Date.now() - startedAt
+        };
+      }
+      await sleep(50);
+    }
+
+    return { matched: false, for: "resultChange", timeoutMs };
   }
 
   function extractFields(root, fields = {}) {
@@ -458,7 +547,8 @@
         output[key] = null;
         continue;
       }
-      output[key] = attr ? node.getAttribute(attr) : compactText(node.textContent, 2000);
+      const value = attr ? node.getAttribute(attr) : compactText(node.textContent, 2000);
+      output[key] = attr === "href" ? absoluteUrl(value) : value;
     }
     return output;
   }
@@ -493,6 +583,221 @@
     }
 
     return result;
+  }
+
+  function textInputScore(element) {
+    if (!(element instanceof HTMLElement) || element.matches("[disabled],[aria-disabled='true']")) return -1;
+    if (!isVisible(element)) return -1;
+
+    const tag = element.localName;
+    const type = (element.getAttribute("type") || "text").toLowerCase();
+    const textTypes = new Set(["email", "number", "search", "tel", "text", "url"]);
+    if (tag === "input" && !textTypes.has(type)) return -1;
+    if (!["input", "textarea"].includes(tag) && !element.isContentEditable) return -1;
+
+    const haystack = [
+      type,
+      element.id,
+      element.getAttribute("name"),
+      element.getAttribute("role"),
+      element.getAttribute("placeholder"),
+      element.getAttribute("aria-label"),
+      labelFor(element),
+      element.closest("form")?.getAttribute("role"),
+      element.closest("form")?.getAttribute("aria-label"),
+      element.closest("form")?.getAttribute("action")
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    let score = 10;
+    if (type === "search" || element.getAttribute("role") === "searchbox") score += 50;
+    if (/\b(search|query|find|q|keywords?)\b/.test(haystack)) score += 35;
+    if (/\b(password|login|email|subscribe|newsletter)\b/.test(haystack)) score -= 30;
+    if (element.value) score -= 5;
+    return score;
+  }
+
+  function findSearchInput(payload = {}) {
+    if (payload.id || payload.selector || payload.role || payload.name) {
+      const element = resolveElement(payload);
+      if (textInputScore(element) >= 0) return element;
+      throw new Error("search_target_does_not_accept_text");
+    }
+
+    const candidates = [...document.querySelectorAll("input, textarea, [contenteditable=''], [contenteditable='true']")]
+      .map((element) => ({ element, score: textInputScore(element) }))
+      .filter((candidate) => candidate.score >= 0)
+      .sort((a, b) => b.score - a.score);
+
+    if (!candidates.length) throw new Error("search_input_not_found");
+    return candidates[0].element;
+  }
+
+  function clickElement(element) {
+    element.scrollIntoView?.({ block: "center", inline: "center", behavior: "instant" });
+    element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, isPrimary: true }));
+    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, isPrimary: true }));
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    element.click();
+  }
+
+  function submitSearch(input, payload = {}) {
+    const submitter = payload.submitSelector ? document.querySelector(payload.submitSelector) : null;
+    if (submitter) {
+      clickElement(submitter);
+      return { method: "click", submitter: descriptorFor(submitter) };
+    }
+
+    const form = input.form || input.closest("form");
+    if (form?.requestSubmit) {
+      form.requestSubmit();
+      return { method: "requestSubmit", form: descriptorFor(form) };
+    }
+
+    if (form) {
+      const event =
+        typeof SubmitEvent === "function"
+          ? new SubmitEvent("submit", { bubbles: true, cancelable: true })
+          : new Event("submit", { bubbles: true, cancelable: true });
+      const allowed = form.dispatchEvent(event);
+      if (allowed && typeof form.submit === "function") form.submit();
+      return { method: allowed ? "submit" : "submit-event-cancelled", form: descriptorFor(form) };
+    }
+
+    input.focus?.();
+    keyEvent(input, "keydown", "Enter");
+    keyEvent(input, "keyup", "Enter");
+    return { method: "enter-key" };
+  }
+
+  async function search(payload = {}) {
+    const query = String(payload.query ?? payload.value ?? "");
+    if (!query) throw new Error("query_required");
+
+    const startedAt = Date.now();
+    const rootSelector = payload.resultsSelector || payload.selectorForResults || "body";
+    const beforeText = textForRoot(rootSelector, payload.maxText || 6000);
+    const input = findSearchInput(payload);
+    setElementValue(input, query, false);
+
+    const submit = payload.submit === false ? { method: "none" } : submitSearch(input, payload);
+    const wait =
+      payload.wait === false
+        ? { matched: false, skipped: true }
+        : payload.waitFor || payload.waitValue
+          ? await waitFor({
+              for: payload.waitFor || "quiet",
+              quietMs: payload.quietMs || 250,
+              timeoutMs: payload.timeoutMs || 5_000,
+              value: payload.waitValue,
+              since: startedAt
+            })
+          : await waitForResultChange(rootSelector, beforeText, payload);
+
+    const root = document.querySelector(rootSelector);
+    const hasArticleResults = Boolean(root?.querySelector("article"));
+    const result = extract({
+      selector: rootSelector,
+      text: payload.text !== false,
+      links: payload.links !== false,
+      limit: payload.limit || 40,
+      maxText: payload.maxText || 6000,
+      items:
+        payload.items ||
+        (hasArticleResults
+          ? {
+              selector: "article",
+              limit: payload.limit || 20,
+              fields: {
+                title: "h1,h2,h3,a",
+                href: { selector: "a[href]", attr: "href" },
+                text: ""
+              }
+            }
+          : undefined)
+    });
+
+    return {
+      query,
+      input: descriptorFor(input),
+      submit,
+      wait,
+      page: {
+        url: location.href,
+        title: document.title
+      },
+      result,
+      elapsedMs: Date.now() - startedAt
+    };
+  }
+
+  async function run(payload = {}) {
+    const steps = Array.isArray(payload.steps) ? payload.steps : [];
+    if (!steps.length) throw new Error("steps_required");
+
+    const startedAt = Date.now();
+    const outputs = [];
+    let lastResult = null;
+    const knownStepTypes = ["observe", "act", "wait", "extract", "search", "sleep"];
+
+    for (let index = 0; index < steps.length; index += 1) {
+      const step = steps[index] || {};
+      const inferredType = knownStepTypes.find((name) => Object.prototype.hasOwnProperty.call(step, name));
+      const type = step.type || step.command || inferredType;
+      const stepPayload = { ...(step.payload || (inferredType ? step[inferredType] : step)) };
+      delete stepPayload.type;
+      delete stepPayload.command;
+
+      try {
+        lastResult = await executeCommand(type, stepPayload);
+        outputs.push({ ok: true, index, type, result: lastResult });
+      } catch (error) {
+        const failure = {
+          ok: false,
+          index,
+          type,
+          error: error instanceof Error ? error.message : String(error)
+        };
+        outputs.push(failure);
+        if (step.continueOnError !== true && payload.continueOnError !== true) {
+          return {
+            ok: false,
+            failedStep: failure,
+            steps: outputs,
+            elapsedMs: Date.now() - startedAt
+          };
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      steps: outputs,
+      result: lastResult,
+      page: {
+        url: location.href,
+        title: document.title
+      },
+      elapsedMs: Date.now() - startedAt
+    };
+  }
+
+  async function executeCommand(type, payload = {}) {
+    if (type === "observe") return observe(payload);
+    if (type === "act") return act(payload);
+    if (type === "wait") return waitFor(payload);
+    if (type === "extract") return extract(payload);
+    if (type === "search") return search(payload);
+    if (type === "run") return run(payload);
+    if (type === "sleep") {
+      const ms = Math.min(Number(payload.ms || payload.timeoutMs || 250), 30_000);
+      await sleep(ms);
+      return { sleptMs: ms };
+    }
+    throw new Error(`unknown_command:${type}`);
   }
 
   function metadata() {
@@ -542,11 +847,7 @@
   async function handleCommand(command) {
     let result;
     try {
-      if (command.type === "observe") result = observe(command.payload);
-      else if (command.type === "act") result = act(command.payload);
-      else if (command.type === "wait") result = await waitFor(command.payload);
-      else if (command.type === "extract") result = extract(command.payload);
-      else throw new Error(`unknown_command:${command.type}`);
+      result = await executeCommand(command.type, command.payload);
     } catch (error) {
       result = {
         ok: false,
@@ -566,6 +867,8 @@
     act,
     wait: waitFor,
     extract,
+    search,
+    run,
     metadata,
     clientId: state.clientId,
     stop() {

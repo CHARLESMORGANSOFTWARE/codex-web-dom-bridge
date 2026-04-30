@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-codex-bridge-url="http://127.0.0.1:8797">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -161,6 +161,9 @@
       </section>
     </main>
 
+    <script>
+      window.CODEX_DOM_BRIDGE_URL = window.CODEX_DOM_BRIDGE_URL || location.origin;
+    </script>
     <script src="/codex-bridge.js"></script>
     <script>
       const records = [
@@ -172,7 +175,7 @@
         {
           topic: "accessibility",
           title: "Labels become navigation fuel",
-          body: "ARIA names, form labels, placeholders, roles, and headings become the control surface."
+          body: "ARIA names, form labels, placeholders, roles, and headings become a structured control surface."
         },
         {
           topic: "speed",

@@ -15,6 +15,8 @@ The public contract is intentionally tiny:
 - `act` clicks, types, checks, selects, focuses, or presses against a DOM handle.
 - `wait` waits for text, selectors, readiness, or quiet DOM.
 - `extract` pulls text, HTML, links, fields, or repeated records out of the page.
+- `run` executes a tiny multi-step DOM workflow in one browser hop.
+- `search` finds the page's search input, submits a query, waits for quiet DOM, and extracts results.
 
 ## Quick Start
 
@@ -57,6 +59,23 @@ Extract visible page text:
 node bin/codex-web.mjs extract active --text
 ```
 
+Run a full DOM workflow in one command:
+
+```bash
+node bin/codex-web.mjs run '[
+  {"act":{"selector":"#query","action":"type","value":"speed"}},
+  {"act":{"selector":"#submit-search","action":"click"}},
+  {"wait":{"for":"quiet","quietMs":250}},
+  {"extract":{"selector":"#results","text":true}}
+]'
+```
+
+Search the current page using its own search box:
+
+```bash
+node bin/codex-web.mjs search "structured" --results '#results'
+```
+
 ## Loading The Extension
 
 1. Start the server with `npm start`.
@@ -66,6 +85,62 @@ node bin/codex-web.mjs extract active --text
 5. Choose "Load unpacked" and select the `extension/` directory.
 
 The extension content script connects to `http://127.0.0.1:8797` by default.
+
+## Connecting Codex
+
+Codex should call this through MCP, not by prompt convention alone. The MCP wrapper exposes the bridge as tools named `web_status`, `web_observe`, `web_act`, `web_wait`, `web_extract`, `web_search`, and `web_run`.
+
+First install dependencies:
+
+```bash
+npm install
+```
+
+Then add the MCP server to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.codex-web]
+command = "node"
+args = ["/Volumes/EXT/Applications/Webtool/bin/codex-web-mcp.mjs"]
+
+[mcp_servers.codex-web.env]
+CODEX_DOM_BRIDGE_URL = "http://127.0.0.1:8797"
+```
+
+For the current demo server on port `8798`, use:
+
+```toml
+[mcp_servers.codex-web]
+command = "node"
+args = ["/Volumes/EXT/Applications/Webtool/bin/codex-web-mcp.mjs"]
+
+[mcp_servers.codex-web.env]
+CODEX_DOM_BRIDGE_URL = "http://127.0.0.1:8798"
+```
+
+Restart Codex after editing the config. In a new Codex turn, ask it to use `web_status`; it should report the bridge URL and connected browser clients. From there:
+
+```text
+Use web_search with query "structured" and resultsSelector "#results".
+```
+
+The browser page still needs the content script: use the demo page, or load the unpacked extension in `extension/` for arbitrary sites.
+
+## Benchmark
+
+With the demo open, run:
+
+```bash
+CODEX_DOM_BRIDGE_URL=http://127.0.0.1:8798 npm run benchmark -- --url http://127.0.0.1:8798 --iterations 9
+```
+
+The benchmark reports:
+
+- `bridge.search`: one tool call for search, wait, and extraction.
+- `bridge.run`: one tool call for a scripted DOM workflow.
+- `bridge.split`: the older multi-call pattern.
+
+Current demo baseline numbers live in `benchmarks/demo-baseline.md`.
 
 ## API
 
@@ -77,6 +152,8 @@ POST /api/:clientId/observe
 POST /api/:clientId/act
 POST /api/:clientId/wait
 POST /api/:clientId/extract
+POST /api/:clientId/run
+POST /api/:clientId/search
 ```
 
 Example:
@@ -85,6 +162,14 @@ Example:
 curl -s http://127.0.0.1:8797/api/active/observe \
   -H 'content-type: application/json' \
   -d '{"include":["inputs","buttons"]}'
+```
+
+One-hop workflow:
+
+```bash
+curl -s http://127.0.0.1:8797/api/active/run \
+  -H 'content-type: application/json' \
+  -d '{"steps":[{"search":{"query":"codex dom","resultsSelector":"#results"}}]}'
 ```
 
 ## Why This Shape
@@ -97,3 +182,5 @@ Fallback order:
 2. CSS selector.
 3. Accessibility role and name.
 4. Browser surface clicking, only when the DOM path is blocked.
+
+The fast path is `run`: compose the obvious DOM steps and let the content script do them locally. That removes the slow screenshot/coordinate loop and avoids paying a server round trip for every keystroke, click, wait, and extraction.

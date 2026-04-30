@@ -1,5 +1,4 @@
 import http from "node:http";
-import { readFile } from "node:fs/promises";
 import { createReadStream, existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,16 +45,6 @@ function noContent(res) {
     "access-control-allow-headers": "content-type"
   });
   res.end();
-}
-
-function text(res, status, value) {
-  res.writeHead(status, {
-    "content-type": "text/plain; charset=utf-8",
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type"
-  });
-  res.end(value);
 }
 
 function notFound(res) {
@@ -199,12 +188,14 @@ async function sendCommand(res, clientId, type, payload) {
   }
 
   try {
+    const startedAt = now();
     const { command, resultPromise } = enqueueCommand(client, type, payload);
     const result = await resultPromise;
     json(res, 200, {
       ok: true,
       clientId: client.id,
       commandId: command.id,
+      elapsedMs: now() - startedAt,
       result
     });
   } catch (error) {
@@ -288,7 +279,7 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  const commandMatch = url.pathname.match(/^\/api\/([^/]+)\/(observe|act|wait|extract)$/);
+  const commandMatch = url.pathname.match(/^\/api\/([^/]+)\/(observe|act|wait|extract|search|run)$/);
   if (req.method === "POST" && commandMatch) {
     const [, rawClientId, type] = commandMatch;
     const body = await readBody(req);
