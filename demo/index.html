@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en" data-codex-bridge-url="http://127.0.0.1:8797">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex DOM Bridge Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f6f4ef;
+        color: #202020;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 56px 20px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(2rem, 7vw, 4.5rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .subhead {
+        max-width: 650px;
+        margin: 0 0 28px;
+        font-size: 1.08rem;
+        line-height: 1.55;
+        color: #505050;
+      }
+
+      form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        max-width: 680px;
+        margin-block: 28px;
+      }
+
+      label {
+        display: block;
+        grid-column: 1 / -1;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      input,
+      button,
+      select {
+        min-height: 46px;
+        border: 1px solid #b9b2a6;
+        border-radius: 8px;
+        font: inherit;
+      }
+
+      input,
+      select {
+        padding: 0 14px;
+        background: #fff;
+      }
+
+      button {
+        padding: 0 18px;
+        background: #173b36;
+        color: white;
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      button.secondary {
+        background: #e0f0ec;
+        color: #173b36;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin: 20px 0;
+      }
+
+      .results {
+        display: grid;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      article {
+        border: 1px solid #d4cec2;
+        border-radius: 8px;
+        padding: 16px;
+        background: #fffdfa;
+      }
+
+      article h2 {
+        margin: 0 0 6px;
+        font-size: 1.1rem;
+      }
+
+      article p {
+        margin: 0;
+        color: #555;
+        line-height: 1.45;
+      }
+
+      @media (max-width: 620px) {
+        form {
+          grid-template-columns: 1fr;
+        }
+
+        button {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>DOM-native web control</h1>
+      <p class="subhead">
+        This page is wired to the local bridge. Codex can observe real HTML controls, type into the
+        search box, click buttons, wait for DOM changes, and extract results without touching pixels.
+      </p>
+
+      <form id="search-form" aria-label="Demo search">
+        <label for="query">Search the tiny index</label>
+        <input id="query" name="query" placeholder="Try bridge, codex, browser, speed" autocomplete="off" />
+        <button id="submit-search" type="submit">Search</button>
+      </form>
+
+      <div class="controls">
+        <label for="topic">Filter</label>
+        <select id="topic" name="topic">
+          <option value="all">All topics</option>
+          <option value="automation">Automation</option>
+          <option value="accessibility">Accessibility</option>
+          <option value="speed">Speed</option>
+        </select>
+        <button class="secondary" id="lucky-button" type="button">I'm feeling structured</button>
+      </div>
+
+      <section aria-live="polite" aria-label="Search results">
+        <h2>Results</h2>
+        <div id="results" class="results">
+          <article>
+            <h2>Ready for commands</h2>
+            <p>Start the bridge server, then run observe to see this page as structured DOM.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script src="/codex-bridge.js"></script>
+    <script>
+      const records = [
+        {
+          topic: "automation",
+          title: "Bridge observe gives Codex handles",
+          body: "A compact page map lets Codex choose e1, e2, or e3 through the bridge instead of guessing coordinates."
+        },
+        {
+          topic: "accessibility",
+          title: "Labels become navigation fuel",
+          body: "ARIA names, form labels, placeholders, roles, and headings become the control surface."
+        },
+        {
+          topic: "speed",
+          title: "Actions hit the DOM directly",
+          body: "Typing, clicking, checking, selecting, and extracting avoid screenshot loops when HTML is available."
+        }
+      ];
+
+      const form = document.querySelector("#search-form");
+      const query = document.querySelector("#query");
+      const topic = document.querySelector("#topic");
+      const results = document.querySelector("#results");
+      const lucky = document.querySelector("#lucky-button");
+
+      function render(items) {
+        results.innerHTML = "";
+        for (const item of items) {
+          const article = document.createElement("article");
+          article.dataset.topic = item.topic;
+          article.innerHTML = `<h2>${item.title}</h2><p>${item.body}</p>`;
+          results.append(article);
+        }
+      }
+
+      function runSearch() {
+        const term = query.value.toLowerCase().trim();
+        const selectedTopic = topic.value;
+        const filtered = records.filter((record) => {
+          const matchesTopic = selectedTopic === "all" || record.topic === selectedTopic;
+          const haystack = `${record.title} ${record.body} ${record.topic}`.toLowerCase();
+          return matchesTopic && (!term || haystack.includes(term));
+        });
+        setTimeout(() => render(filtered.length ? filtered : [{ topic: "none", title: "No matches", body: "Try a broader query." }]), 180);
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        runSearch();
+      });
+
+      topic.addEventListener("change", runSearch);
+
+      lucky.addEventListener("click", () => {
+        query.value = "structured";
+        topic.value = "accessibility";
+        runSearch();
+      });
+    </script>
+  </body>
+</html>

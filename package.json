@@ -1,0 +1,18 @@
+{
+  "name": "webtool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A tiny DOM-native web control bridge for letting Codex observe and act on browser pages without pixel targeting.",
+  "bin": {
+    "codex-web": "./bin/codex-web.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "demo": "node src/server.mjs --open-demo",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
