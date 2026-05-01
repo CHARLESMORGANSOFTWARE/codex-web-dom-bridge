@@ -8,6 +8,12 @@ Instead of forcing Codex to inspect screenshots, guess coordinates, move the mou
 
 The result is a faster, cleaner, and more accurate way for Codex to control websites.
 
+## Product Demo
+
+[![Watch the Codex Web DOM Bridge product promo](docs/assets/codex-dom-bridge-product-promo.jpg)](docs/assets/codex-dom-bridge-product-promo.mp4)
+
+Watch the short product promo: [codex-dom-bridge-product-promo.mp4](docs/assets/codex-dom-bridge-product-promo.mp4).
+
 Codex can use the bridge through MCP tools such as `web_observe`, `web_act`, `web_wait`, `web_extract`, `web_search`, and `web_run`. The bridge maps live page elements into stable temporary handles, then resolves later actions against the actual DOM node. That means Codex can work more like a browser-native automation agent instead of a remote human trying to click around visually.
 
 This is especially useful for:
